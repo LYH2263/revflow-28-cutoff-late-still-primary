@@ -67,6 +67,23 @@ def get_promotions():
     return gate.list_promotion_runs()
 
 
+@router.get("/cutoff/proofs")
+def get_proofs(limit: int = Query(100, ge=1, le=1000)):
+    return gate.list_cutoff_proofs(limit)
+
+
+@router.get("/cutoff/proofs/{batch_id}")
+def get_proof(batch_id: int):
+    """按装载批次 id 查询截止证明（只读）。"""
+    return gate.get_cutoff_proof_or_404(batch_id)
+
+
+@router.get("/ingest-runs")
+def get_ingest_runs(limit: int = Query(50, ge=1, le=500)):
+    """装载批次：正式/旁路分列 + 每键通道 + 同批次截止证明。"""
+    return gate.list_ingest_runs(limit)
+
+
 @router.get("/ingest-report")
 def get_report():
     return gate.ingest_report()

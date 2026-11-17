@@ -86,7 +86,11 @@ def list_entries(kind: str | None = None) -> list[dict]:
                 ORDER BY e.id
                 """
             ).fetchall()
-        return rows_to_dicts(rows)
+        out = rows_to_dicts(rows)
+        # 通道口径直接回源：ledger_entries 即正式轨，侧表即旁路轨
+        for row in out:
+            row["通道"] = "正式"
+        return out
 
 
 def list_quarantine() -> list[dict]:
@@ -117,8 +121,30 @@ def list_verify_reports() -> list[dict]:
 
 
 def run_settle() -> dict:
-    """底座冒烟：按账户汇总正向−已匹配冲正；无原单/超额冲正进隔离；余额写账户。"""
+    """按账户汇总正向−已匹配冲正；无原单/超额冲正进隔离；余额写账户。
+
+    分流口径：正式归并**只**看 ledger_entries。旁路区 sidecar_forward_entries
+    是独立物理表，本轮不允许被并入候选、不允许被按 id 回写主表。
+
+    失败闭闸：开跑前校验「待晋升旁路键 ∩ 正式流水键」为空。若不为空说明有
+    旁路键已渗入正式待归并集合，整趟归并拒绝开跑（不落 settle_run、不动余额）。
+    """
     with connect() as conn:
+        leaked = conn.execute(
+            """
+            SELECT s.entry_key FROM sidecar_forward_entries s
+            JOIN ledger_entries e ON e.entry_key = s.entry_key
+            WHERE s.status = '旁路待晋升'
+            """
+        ).fetchall()
+        if leaked:
+            keys = [r["entry_key"] for r in leaked]
+            raise HTTPException(
+                409,
+                "归并失败闭：旁路待晋升键出现在正式流水集合中 "
+                f"{keys}；拒绝开跑以免改动余额",
+            )
+
         now = _now()
         cur = conn.execute(
             """
@@ -134,14 +160,6 @@ def run_settle() -> dict:
                 "SELECT * FROM ledger_entries WHERE kind = '正向' AND status = '待归并' ORDER BY id"
             ).fetchall()
         )
-        side = rows_to_dicts(
-            conn.execute(
-                "SELECT entry_key, account_id, amount_cents, biz_ref, booked_at, "
-                "'正向' AS kind, '待归并' AS status, NULL AS target_entry_key, "
-                "id FROM sidecar_forward_entries WHERE status = '旁路待晋升' ORDER BY id"
-            ).fetchall()
-        )
-        forwards = forwards + side
         reversals = rows_to_dicts(
             conn.execute(
                 "SELECT * FROM ledger_entries WHERE kind = '冲正' AND status = '待归并' ORDER BY id"
