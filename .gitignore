@@ -1,0 +1,9 @@
+backend/data/
+backend/data_test/
+backend/data_cutoff_test/
+**/__pycache__/
+**/.pytest_cache/
+frontend/node_modules/
+frontend/dist/
+frontend/.npm-cache/
+*.db
